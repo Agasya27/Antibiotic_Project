@@ -12,7 +12,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
 if PROJECT_ROOT not in sys.path:
     sys.path.append(PROJECT_ROOT)
 
-from backend.infer import ModelBundle
+from backend.infer import ModelBundle, predict_for_new_patient
 from backend.recommend import rank_antibiotics
 
 
@@ -68,7 +68,8 @@ def _ensure_models_available(models_dir: str) -> str:
     has_classifier = classifier_path and os.path.exists(classifier_path)
     has_regressor = regressor_path and os.path.exists(regressor_path)
 
-    if has_classifier and has_regressor:
+    # If we have at least the classifier locally, proceed with local models_dir
+    if has_classifier:
         return models_dir
 
     # Try to download into /tmp/models
@@ -77,26 +78,30 @@ def _ensure_models_available(models_dir: str) -> str:
     classifier_url = os.getenv("CLASSIFIER_MODEL_URL")
     regressor_url = os.getenv("REGRESSOR_MODEL_URL")
 
-    if not classifier_url or not regressor_url:
+    if not classifier_url:
         raise HTTPException(status_code=500, detail=(
-            "Model binaries are missing. Provide CLASSIFIER_MODEL_URL and REGRESSOR_MODEL_URL env vars "
-            "to download models at runtime, or commit .cbm files into the repository."
+            "Classifier model is missing. Provide CLASSIFIER_MODEL_URL env var to download at runtime, "
+            "or commit classifier .cbm into the repository."
         ))
 
     # Derive filenames from original metadata or generic names
     classifier_dest = os.path.join(tmp_models_dir, os.path.basename(classifier_path or "classifier_cb.cbm"))
-    regressor_dest = os.path.join(tmp_models_dir, os.path.basename(regressor_path or "regressor_cb.cbm"))
-
     _download_file(classifier_url, classifier_dest)
-    _download_file(regressor_url, regressor_dest)
+
+    regressor_dest: Optional[str] = None
+    if regressor_url:
+        regressor_dest = os.path.join(tmp_models_dir, os.path.basename(regressor_path or "regressor_cb.cbm"))
+        _download_file(regressor_url, regressor_dest)
 
     # Patch metadata.json in /tmp to point to downloaded models
     tmp_metadata_path = os.path.join(tmp_models_dir, "metadata.json")
     with open(tmp_metadata_path, "w", encoding="utf-8") as f:
-        metadata["classifier_model_path"] = os.path.basename(classifier_dest)
-        metadata["regressor_model_path"] = os.path.basename(regressor_dest)
-        metadata["classifier_path"] = metadata["classifier_model_path"]
-        metadata["regressor_path"] = metadata["regressor_model_path"]
+        # Use absolute paths so ModelBundle.load() can find them
+        metadata["classifier_model_path"] = classifier_dest
+        metadata["classifier_path"] = classifier_dest
+        if regressor_dest:
+            metadata["regressor_model_path"] = regressor_dest
+            metadata["regressor_path"] = regressor_dest
         json.dump(metadata, f, indent=2)
 
     return tmp_models_dir
@@ -108,6 +113,7 @@ def _load_bundle() -> None:
     models_dir = os.path.join(PROJECT_ROOT, "models")
     use_dir = _ensure_models_available(models_dir)
     _bundle = ModelBundle(models_dir=use_dir)
+    _bundle.load()
 
 
 @app.post("/predict")
@@ -117,21 +123,24 @@ def predict(req: PredictRequest):
 
     # Assemble a single-row patient record
     row = req.features.copy()
-    row[_bundle.org_col] = req.organism
-    row[_bundle.ab_col] = req.antibiotic
+    org_col = _bundle.organism_col()
+    ab_col = _bundle.antibiotic_col()
+    if org_col:
+        row[org_col] = req.organism
+    if ab_col:
+        row[ab_col] = req.antibiotic
 
     try:
-        result = _bundle.predict_for_new_patient(row)
-        ranked = rank_antibiotics(_bundle, row, req.organism, top_k=req.top_k or 5)
+        result = predict_for_new_patient(_bundle, row)
+        ranked_df = rank_antibiotics(_bundle, row, req.organism, top_k=req.top_k or 5)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Inference error: {e}")
 
     return {
-        "probability_resistance": result["probability_resistance"],
-        "predicted_time_to_resistance": result["predicted_time_to_resistance"],
-        "top_antibiotics": ranked,
-        "feature_columns": _bundle.feature_cols,
-        "categorical_features": _bundle.cat_features,
-        "organism_column": _bundle.org_col,
-        "antibiotic_column": _bundle.ab_col,
+        "resistance_probability": result["resistance_probability"],
+        "predicted_time_to_resistance_days": result["predicted_time_to_resistance_days"],
+        "top_antibiotics": ranked_df.to_dict(orient="records"),
+        "feature_columns": _bundle.feature_columns(),
+        "organism_column": org_col,
+        "antibiotic_column": ab_col,
     }
