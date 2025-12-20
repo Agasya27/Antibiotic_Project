@@ -60,3 +60,65 @@ UI features:
 
 - If susceptibility column is not detected, ensure a column contains only `Susceptible`, `Intermediate`, `Resistant` values.
 - If organism/antibiotic columns are custom-named, detection scans for common names or substrings.
+
+## Deploy on Vercel (API + Static Frontend)
+
+Vercel does not host a persistent Streamlit server. Instead, this repo includes a serverless FastAPI endpoint and a minimal static page:
+
+- API function: `api/predict.py` (FastAPI)
+- Static frontend: `index.html`
+- Config: `vercel.json`
+
+The API loads trained models from `models/metadata.json` and the `.cbm` binaries. If the `.cbm` files are not committed, the function can download them at cold start from URLs you provide as environment variables.
+
+### Environment Variables (on Vercel)
+
+Configure these in your Vercel Project Settings → Environment Variables:
+
+- `CLASSIFIER_MODEL_URL`: HTTPS URL to `classifier_cb.cbm`
+- `REGRESSOR_MODEL_URL`: HTTPS URL to `regressor_cb.cbm` (omit or still provide if regression not used)
+
+Notes:
+- If you commit the `.cbm` files into `models/`, the API will use them directly and ignore the URLs.
+- If you use URLs, they will be downloaded to `/tmp/models` on cold start and referenced via a patched `metadata.json` in `/tmp`.
+
+### Deploy Steps
+
+1. Ensure models are available:
+	- Option A: Commit `models/classifier_cb.cbm` and `models/regressor_cb.cbm` to the repo (beware size limits).
+	- Option B: Upload the binaries to a stable hosting location (e.g., GitHub Releases, cloud storage) and set the env vars above.
+
+2. Push to GitHub (already done). Then on Vercel:
+	- Import the repository `Agasya27/Antibiotic_Project`.
+	- Set env vars as needed.
+	- Trigger a deployment.
+
+3. Use the deployed site:
+	- Open the root URL to access the simple page (`index.html`).
+	- It posts to `/api/predict` with JSON and renders results.
+
+### Local API Test
+
+You can run the API locally (requires models present locally):
+
+```bash
+uvicorn api.predict:app --host 0.0.0.0 --port 8000
+```
+
+Test with:
+
+```bash
+curl -X POST http://localhost:8000/predict \
+  -H "Content-Type: application/json" \
+  -d '{
+		  "organism": "ESCHERICHIA COLI",
+		  "antibiotic": "Trimethoprim/Sulfamethoxazole",
+		  "features": {"age": 45, "sex": "F"},
+		  "top_k": 5
+		}'
+```
+
+### Limitations
+
+- Serverless functions have memory/time limits; large models may increase cold start time.
+- Training should be done offline; deploy only inference artifacts.

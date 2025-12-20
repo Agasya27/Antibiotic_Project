@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Antibiotic Resistance Predictor</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 2rem; }
+      input, select, button, textarea { padding: 0.5rem; margin: 0.25rem 0; font-size: 1rem; }
+      .row { display: flex; gap: 1rem; flex-wrap: wrap; }
+      .card { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; margin-top: 1rem; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem; }
+      pre { background: #f7f7f7; padding: 1rem; border-radius: 6px; overflow: auto; }
+    </style>
+  </head>
+  <body>
+    <h1>Antibiotic Resistance Predictor</h1>
+    <p>Simple frontend calling Vercel API. For full UI, use Streamlit locally.</p>
+
+    <div class="card">
+      <h2>Input</h2>
+      <div class="row">
+        <div>
+          <label>Organism</label><br />
+          <input id="organism" placeholder="ESCHERICHIA COLI" />
+        </div>
+        <div>
+          <label>Antibiotic</label><br />
+          <input id="antibiotic" placeholder="Trimethoprim/Sulfamethoxazole" />
+        </div>
+        <div>
+          <label>Top K alternatives</label><br />
+          <input id="topk" type="number" value="5" min="1" max="10" />
+        </div>
+      </div>
+      <label>Features (JSON)</label>
+      <textarea id="features" rows="8" placeholder='{"age": 45, "sex": "F", ...}'></textarea>
+      <br />
+      <button id="run">Predict</button>
+    </div>
+
+    <div id="results" class="grid" style="margin-top:1rem"></div>
+
+    <script>
+      async function predict() {
+        const organism = document.getElementById('organism').value.trim();
+        const antibiotic = document.getElementById('antibiotic').value.trim();
+        const topk = parseInt(document.getElementById('topk').value, 10) || 5;
+        let features = {};
+        try {
+          features = JSON.parse(document.getElementById('features').value || '{}');
+        } catch (e) {
+          alert('Invalid features JSON');
+          return;
+        }
+
+        const payload = { organism, antibiotic, features, top_k: topk };
+        const resEl = document.getElementById('results');
+        resEl.innerHTML = '<div class="card"><strong>Running...</strong></div>';
+
+        try {
+          const resp = await fetch('/api/predict', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const data = await resp.json();
+          if (!resp.ok) {
+            throw new Error(data.detail || JSON.stringify(data));
+          }
+
+          resEl.innerHTML = `
+            <div class="card">
+              <h3>Prediction</h3>
+              <p><strong>Resistance Probability:</strong> ${Number(data.probability_resistance).toFixed(4)}</p>
+              <p><strong>Predicted Time to Resistance:</strong> ${Number(data.predicted_time_to_resistance).toFixed(2)}</p>
+            </div>
+            <div class="card">
+              <h3>Top Alternatives</h3>
+              <pre>${JSON.stringify(data.top_antibiotics, null, 2)}</pre>
+            </div>
+          `;
+        } catch (err) {
+          resEl.innerHTML = `<div class="card"><strong>Error:</strong> ${String(err)}</div>`;
+        }
+      }
+
+      document.getElementById('run').addEventListener('click', predict);
+    </script>
+  </body>
+  </html>
