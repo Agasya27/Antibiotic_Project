@@ -59,11 +59,19 @@
         resEl.innerHTML = '<div class="card"><strong>Running...</strong></div>';
 
         try {
-          const resp = await fetch('/api/predict', {
+          // Try Vercel-style path first, then fallback to Render single-service path
+          let resp = await fetch('/api/predict', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
           });
+          if (resp.status === 404) {
+            resp = await fetch('/predict', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+          }
           const data = await resp.json();
           if (!resp.ok) {
             throw new Error(data.detail || JSON.stringify(data));

@@ -122,3 +122,36 @@ curl -X POST http://localhost:8000/predict \
 
 - Serverless functions have memory/time limits; large models may increase cold start time.
 - Training should be done offline; deploy only inference artifacts.
+
+## Deploy on Render
+
+Use a Web Service for the FastAPI API (Static Site cannot run Python servers). This repo includes a `render.yaml` blueprint you can import, or configure manually:
+
+### Web Service Settings
+- Branch: `main`
+- Build Command:
+	```bash
+	pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
+	```
+- Start Command:
+	```bash
+	uvicorn api.predict:app --host 0.0.0.0 --port $PORT
+	```
+- Environment Variables:
+	- `PYTHON_VERSION=3.11` (important to match CatBoost/NumPy wheels)
+	- `CLASSIFIER_MODEL_URL` (if you don’t commit `.cbm`)
+	- `REGRESSOR_MODEL_URL` (optional)
+
+If using the blueprint, see `render.yaml` which pins Python 3.11 and sets build/start commands.
+
+### Frontend Options
+- Option A: Keep `index.html` in this repo and deploy it as a separate Static Site, updating the fetch URL to your API domain:
+	```js
+	fetch('https://YOUR-API.onrender.com/predict', ...)
+	```
+- Option B: Serve `index.html` from the same Web Service. The included page first tries `/api/predict` (Vercel), then falls back to `/predict` (Render) automatically.
+
+### Troubleshooting on Render
+- If you see Python 3.13: add `PYTHON_VERSION=3.11`. Render defaults to latest if unspecified.
+- Build command must chain commands with `&&` (not a space). Example above is correct.
+- Large model binaries may slow cold start. Using URLs is fine; they’re downloaded to `/tmp/models` on startup.
