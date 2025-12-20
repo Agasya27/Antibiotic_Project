@@ -142,6 +142,8 @@ Use a Web Service for the FastAPI API (Static Site cannot run Python servers). T
 	- `CLASSIFIER_MODEL_URL` (if you don’t commit `.cbm`)
 	- `REGRESSOR_MODEL_URL` (optional)
 
+Also included is a `.python-version` file set to `3.11.9` which Render respects to choose the correct Python runtime. If you see Python 3.13 in logs, ensure your service is a Web Service and that this file is present.
+
 If using the blueprint, see `render.yaml` which pins Python 3.11 and sets build/start commands.
 
 ### Frontend Options
@@ -152,6 +154,6 @@ If using the blueprint, see `render.yaml` which pins Python 3.11 and sets build/
 - Option B: Serve `index.html` from the same Web Service. The included page first tries `/api/predict` (Vercel), then falls back to `/predict` (Render) automatically.
 
 ### Troubleshooting on Render
-- If you see Python 3.13: add `PYTHON_VERSION=3.11`. Render defaults to latest if unspecified.
+- If you see Python 3.13: use a Web Service (not Static Site) and ensure `.python-version` exists or set `PYTHON_VERSION=3.11` in env vars.
 - Build command must chain commands with `&&` (not a space). Example above is correct.
 - Large model binaries may slow cold start. Using URLs is fine; they’re downloaded to `/tmp/models` on startup.
