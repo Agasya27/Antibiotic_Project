@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual environments
+.venv/
+.venv311/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Streamlit
+.streamlit/
+
+# VS Code
+.vscode/
+
+# Models (large binaries)
+models/*.cbm
+
+# Secrets
+.env
+
+# OS
+Thumbs.db

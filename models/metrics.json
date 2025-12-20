@@ -1,0 +1,12 @@
+{
+  "classifier": {
+    "roc_auc": 0.858247103875606,
+    "f1": 0.6056018168054503,
+    "precision": 0.5444646098003629,
+    "recall": 0.6822057987492893
+  },
+  "classifier_best_threshold": 0.6,
+  "regressor": {
+    "rmse": 660.9626843091673
+  }
+}
