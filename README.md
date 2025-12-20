@@ -178,3 +178,26 @@ Common pitfalls:
 - Use a Web Service, not a Static Site (Streamlit needs a Python server).
 - Chain build commands with `&&` so the second pip command runs.
 - If requirements install fails, ensure Python 3.11 is selected (via `.python-version` or env var).
+
+## Streamlit Community Cloud (streamlit.io)
+
+For Streamlit Cloud, use the remote API mode to avoid heavy ML dependencies:
+
+- Set a secret `PREDICT_API_BASE` to your FastAPI base URL (e.g., `https://YOUR-API.onrender.com`).
+- The app will call `PREDICT_API_BASE/predict` and won’t import CatBoost locally.
+- Use the lighter dependency file `requirements.streamlit.txt` (UI-only):
+
+```
+streamlit>=1.29.0
+requests>=2.31.0
+python-dotenv>=1.0.0
+pandas==2.1.4
+numpy==1.26.4
+matplotlib==3.10.8
+```
+
+In Streamlit Cloud settings, select Python 3.11 and point the Dependencies to `requirements.streamlit.txt` or paste the packages.
+
+Troubleshooting:
+- "Error installing requirements" usually means incompatible Python or heavy packages timing out. Remote API mode fixes this.
+- If you still want local ML on Cloud, pin Python 3.11 and keep `requirements.txt`, but builds may take longer or exceed limits.

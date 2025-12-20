@@ -9,8 +9,20 @@ import requests
 import json
 from dotenv import load_dotenv
 
-from backend.infer import ModelBundle, predict_for_new_patient
-from backend.recommend import rank_antibiotics
+# Optional local inference imports; only load when running locally
+API_BASE = os.getenv("PREDICT_API_BASE", "").strip()
+USE_LOCAL = len(API_BASE) == 0
+if USE_LOCAL:
+    from backend.infer import ModelBundle, predict_for_new_patient
+    from backend.recommend import rank_antibiotics
+else:
+    # Utilities for metadata detection from dataset when using remote API
+    from backend.utils import (
+        detect_organism_column,
+        detect_antibiotic_column,
+        get_categorical_features,
+        collect_metadata,
+    )
 
 MODELS_DIR = "models"
 DATASET = "microbiology_combined_clean.csv"
@@ -49,20 +61,45 @@ def default_for_col(df: pd.DataFrame, col: str, is_cat: bool):
     except Exception:
         return None
 
-@st.cache_resource
-def load_bundle():
-    bundle = ModelBundle(MODELS_DIR)
-    bundle.load()
-    return bundle
-
-bundle = load_bundle()
 df = load_dataset()
-feature_cols = bundle.feature_columns()
-organism_col = bundle.organism_col()
-antibiotic_col = bundle.antibiotic_col()
-organisms = bundle.metadata.get("organisms", [])
-antibiotics = bundle.metadata.get("antibiotics", [])
-cat_cols = set(bundle.metadata.get("categorical_feature_cols", []))
+if USE_LOCAL:
+    @st.cache_resource
+    def load_bundle():
+        bundle = ModelBundle(MODELS_DIR)
+        bundle.load()
+        return bundle
+    bundle = load_bundle()
+    feature_cols = bundle.feature_columns()
+    organism_col = bundle.organism_col()
+    antibiotic_col = bundle.antibiotic_col()
+    organisms = bundle.metadata.get("organisms", [])
+    antibiotics = bundle.metadata.get("antibiotics", [])
+    cat_cols = set(bundle.metadata.get("categorical_feature_cols", []))
+else:
+    # Remote mode: infer columns from dataset
+    organism_col = detect_organism_column(df)
+    antibiotic_col = detect_antibiotic_column(df)
+    # Curate features from dataset for UI; fall back to common ones already used below
+    feature_cols = [
+        c for c in [
+            "time_to_culturetime",
+            "medication_time_to_culturetime",
+            "prior_infecting_organism_days_to_culutre",
+            "ordering_mode",
+            "culture_description",
+            "age",
+            "gender",
+            "prior_organism",
+            "medication_category",
+            "medication_name",
+            "antibiotic_class",
+            "order_time_jittered_utc",
+        ] if c in df.columns
+    ]
+    meta = collect_metadata(df, organism_col, antibiotic_col)
+    organisms = meta.get("organisms", [])
+    antibiotics = meta.get("antibiotics", [])
+    cat_cols = set(get_categorical_features(df, feature_cols))
 order_time_default = str(default_for_col(df, "order_time_jittered_utc", True) or "2024-07-15 09:00:00+00:00")
 
 # Load environment variables from .env if present
@@ -168,7 +205,23 @@ if run_btn:
             row[c] = str(row[c])
 
     try:
-        out = predict_for_new_patient(bundle, row)
+        if USE_LOCAL:
+            out = predict_for_new_patient(bundle, row)
+        else:
+            resp = requests.post(
+                url=f"{API_BASE.rstrip('/')}/predict",
+                headers={"Content-Type": "application/json"},
+                data=json.dumps({
+                    "organism": organism_val or "",
+                    "antibiotic": antibiotic_val or "",
+                    "features": row,
+                    "top_k": 10,
+                }),
+                timeout=30,
+            )
+            if not resp.ok:
+                raise RuntimeError(f"Remote API error: {resp.status_code} {resp.text[:200]}")
+            out = resp.json()
     except Exception as e:
         st.error(f"Prediction failed: {e}")
         st.stop()
@@ -176,13 +229,14 @@ if run_btn:
     # Results display
     col1, col2 = st.columns(2)
     with col1:
+        prob_val = out.get("resistance_probability") or out.get("probability_resistance")
         st.metric(
             label="Resistance Probability",
-            value=f"{out['resistance_probability']:.3f}",
+            value=f"{float(prob_val):.3f}",
             help="P(resistant | patient, organism, antibiotic)"
         )
     with col2:
-        ttr = out.get("predicted_time_to_resistance_days")
+        ttr = out.get("predicted_time_to_resistance_days") or out.get("predicted_time_to_resistance")
         if ttr is None or (isinstance(ttr, float) and np.isnan(ttr)):
             st.metric(label="Predicted Time to Resistance (days)", value="N/A", help="Regressor unavailable or time censored")
         else:
@@ -191,10 +245,15 @@ if run_btn:
     st.divider()
     st.subheader("Top Recommended Alternative Antibiotics")
     try:
-        alt_df = rank_antibiotics(bundle, row, organism_val, top_k=10)
+        if USE_LOCAL:
+            alt_df = rank_antibiotics(bundle, row, organism_val, top_k=10)
+        else:
+            # Use top_antibiotics returned by API
+            alts = out.get("top_antibiotics", [])
+            alt_df = pd.DataFrame(alts)
         # Exclude the selected antibiotic from alternatives
-        if antibiotic_col and antibiotic_val is not None:
-            alt_df = alt_df[alt_df["antibiotic"] != antibiotic_val]
+        if antibiotic_col and antibiotic_val is not None and isinstance(alt_df, pd.DataFrame):
+            alt_df = alt_df[alt_df.get("antibiotic", pd.Series(dtype=str)) != antibiotic_val]
         st.dataframe(alt_df, use_container_width=True)
     except Exception as e:
         st.error(f"Ranking failed: {e}")
@@ -224,7 +283,12 @@ else:
 def _summarize(prob: float, ttr_val: float, organism: str, antibiotic: str, alternatives_df: pd.DataFrame) -> str:
     if not OPENROUTER_API_KEY:
         raise RuntimeError("Missing OpenRouter API key (.env OPENROUTER_API_KEY)")
-    threshold = bundle.metadata.get("best_threshold", 0.5)
+    threshold = 0.5
+    if USE_LOCAL:
+        try:
+            threshold = float(getattr(bundle, "metadata", {}).get("best_threshold", 0.5))
+        except Exception:
+            threshold = 0.5
     top_alts = []
     try:
         top_alts = alternatives_df.head(3).to_dict(orient="records")
