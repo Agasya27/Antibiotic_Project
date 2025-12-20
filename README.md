@@ -157,3 +157,24 @@ If using the blueprint, see `render.yaml` which pins Python 3.11 and sets build/
 - If you see Python 3.13: use a Web Service (not Static Site) and ensure `.python-version` exists or set `PYTHON_VERSION=3.11` in env vars.
 - Build command must chain commands with `&&` (not a space). Example above is correct.
 - Large model binaries may slow cold start. Using URLs is fine; they’re downloaded to `/tmp/models` on startup.
+
+## Streamlit on Render
+
+You can deploy the Streamlit UI directly as a Web Service. Use the included `render-streamlit.yaml` or configure manually:
+
+### Web Service Settings (Streamlit)
+- Build Command:
+	```bash
+	pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
+	```
+- Start Command:
+	```bash
+	streamlit run app.py --server.port $PORT --server.address 0.0.0.0
+	```
+- Environment:
+	- `PYTHON_VERSION=3.11`
+
+Common pitfalls:
+- Use a Web Service, not a Static Site (Streamlit needs a Python server).
+- Chain build commands with `&&` so the second pip command runs.
+- If requirements install fails, ensure Python 3.11 is selected (via `.python-version` or env var).
