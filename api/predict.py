@@ -21,6 +21,7 @@ class PredictRequest(BaseModel):
     antibiotic: str
     features: Dict[str, Any]
     top_k: Optional[int] = 5
+    alpha: Optional[float] = 0.6
 
 
 app = FastAPI(title="Antibiotic Resistance Prediction API")
@@ -131,15 +132,33 @@ def predict(req: PredictRequest):
         row[ab_col] = req.antibiotic
 
     try:
+        # Base CatBoost prediction
         result = predict_for_new_patient(_bundle, row)
-        ranked_df = rank_antibiotics(_bundle, row, req.organism, top_k=req.top_k or 5)
+        # Ensemble ranking (LSTM unavailable in API, pass None; function will fall back to CatBoost-only)
+        ranked_df = rank_antibiotics(
+            bundle=_bundle,
+            lstm=None,
+            patient_row=row,
+            patient_sequence=None,
+            organism_value=req.organism,
+            alpha=float(req.alpha or 0.6),
+            top_k=int(req.top_k or 5),
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Inference error: {e}")
 
+    # Map ensemble output columns for downstream clients; include aliases
+    records = ranked_df.to_dict(orient="records")
+    for r in records:
+        if "resistance_probability" not in r and "p_final" in r:
+            r["resistance_probability"] = r["p_final"]
     return {
+        "p_catboost": result["resistance_probability"],
+        "p_lstm": None,
+        "p_final": result["resistance_probability"],
         "resistance_probability": result["resistance_probability"],
         "predicted_time_to_resistance_days": result["predicted_time_to_resistance_days"],
-        "top_antibiotics": ranked_df.to_dict(orient="records"),
+        "top_antibiotics": records,
         "feature_columns": _bundle.feature_columns(),
         "organism_column": org_col,
         "antibiotic_column": ab_col,

@@ -51,6 +51,35 @@ UI features:
 - CatBoost handles missing values natively. Categorical features are passed as strings.
 - Regression excludes censored rows (missing time-to-resistance) from training.
 
+## Ensemble (CatBoost + LSTM)
+
+- Resistance probability uses a weighted ensemble: `P_final = α * P_catboost + (1 - α) * P_lstm` (default α=0.6).
+- CatBoost (tabular) predicts resistance and time-to-resistance; LSTM (sequence) predicts resistance at the latest timestep.
+- Antibiotic ranking uses `P_final` ascending, then time-to-resistance descending.
+
+### LSTM Model
+- Training script: `backend/train_lstm.py` (masked LSTM over patient sequences). Saves `models/lstm_model.pt` and `models/lstm_meta.json`.
+- Inference: `backend/infer_lstm.py` loads saved weights and training metadata for consistent encoders/scalers.
+- If PyTorch is not installed, the app gracefully falls back to CatBoost-only.
+
+Install CPU-only PyTorch on Windows:
+
+```powershell
+.\.venv311\Scripts\Activate.ps1
+pip install --upgrade pip
+pip install torch==2.3.1+cpu --index-url https://download.pytorch.org/whl/cpu
+```
+
+Train LSTM (optional):
+```powershell
+python -m backend.train_lstm --dataset microbiology_combined_clean.csv --models_dir models --epochs 15 --batch_size 64
+```
+
+Evaluate LSTM accuracy (last timestep):
+```powershell
+python -m backend.eval_lstm --dataset microbiology_combined_clean.csv --models_dir models --threshold 0.5
+```
+
 ## Configuration
 
 - Classification head mode: `--mode binary_rs` or `--mode binary_ni`.
@@ -178,6 +207,7 @@ Common pitfalls:
 - Use a Web Service, not a Static Site (Streamlit needs a Python server).
 - Chain build commands with `&&` so the second pip command runs.
 - If requirements install fails, ensure Python 3.11 is selected (via `.python-version` or env var).
+ - On Render/Cloud, avoid installing PyTorch unless needed; the UI will work with CatBoost-only, or point it to a remote API.
 
 ## Streamlit Community Cloud (streamlit.io)
 
