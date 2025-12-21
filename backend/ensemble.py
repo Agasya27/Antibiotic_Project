@@ -3,10 +3,9 @@ from typing import Dict, Optional
 import numpy as np
 
 from backend.infer_catboost import CatBoostInfer
-from backend.infer_lstm import LSTMInfer
 
 
-def ensemble_predict(catboost: CatBoostInfer, lstm: LSTMInfer, row: Dict, sequence_df, alpha: float = 0.6) -> Dict:
+def ensemble_predict(catboost: CatBoostInfer, lstm: Optional[object], row: Dict, sequence_df, alpha: float = 0.6) -> Dict:
     """Compute CatBoost prob, LSTM prob, ensemble prob and time-to-resistance.
 
     alpha: weight for CatBoost probability.
