@@ -4,11 +4,10 @@ import numpy as np
 import pandas as pd
 
 from backend.infer import ModelBundle, predict_for_new_patient
-from backend.infer_lstm import LSTMInfer
 from backend.ensemble import ensemble_predict
 
 
-def rank_antibiotics(bundle: ModelBundle, lstm: Optional[LSTMInfer], patient_row: Dict, patient_sequence: Optional[pd.DataFrame], organism_value: Optional[str], alpha: float = 0.6, top_k: int = 10) -> pd.DataFrame:
+def rank_antibiotics(bundle: ModelBundle, lstm: Optional[object], patient_row: Dict, patient_sequence: Optional[pd.DataFrame], organism_value: Optional[str], alpha: float = 0.6, top_k: int = 10) -> pd.DataFrame:
     """
     For a given patient + organism, score all antibiotics using ensemble.
     Rank by lowest final probability, then longest predicted time to resistance.

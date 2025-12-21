@@ -16,7 +16,11 @@ if USE_LOCAL:
     from backend.infer import ModelBundle, predict_for_new_patient
     from backend.recommend import rank_antibiotics
     from backend.infer_catboost import CatBoostInfer
-    from backend.infer_lstm import LSTMInfer
+    # Make LSTM optional to avoid hard dependency on torch
+    try:
+        from backend.infer_lstm import LSTMInfer
+    except Exception:
+        LSTMInfer = None
     from backend.ensemble import ensemble_predict
 else:
     # Utilities for metadata detection from dataset when using remote API
@@ -81,12 +85,14 @@ if USE_LOCAL:
     # Initialize inference helpers
     catboost_inf = CatBoostInfer(models_dir=MODELS_DIR)
     # LSTM may not exist; handle gracefully
-    try:
-        lstm_inf: Optional[LSTMInfer] = LSTMInfer(models_dir=MODELS_DIR, dataset_csv=DATASET)
-        st.success("LSTM model loaded")
-    except Exception as e:
-        lstm_inf = None
-        st.warning(f"LSTM not available: {e}")
+    lstm_inf: Optional[object] = None
+    if LSTMInfer is not None:
+        try:
+            lstm_inf = LSTMInfer(models_dir=MODELS_DIR, dataset_csv=DATASET)
+            st.success("LSTM model loaded")
+        except Exception as e:
+            lstm_inf = None
+            st.warning(f"LSTM not available: {e}")
 else:
     # Remote mode: infer columns from dataset
     organism_col = detect_organism_column(df)
