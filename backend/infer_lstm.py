@@ -63,7 +63,20 @@ class LSTMInfer:
         self.models_dir = models_dir
         self.dataset_csv = dataset_csv
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self._build_encoders()
+        # Prefer training metadata if available
+        meta_path = os.path.join(models_dir, "lstm_meta.json")
+        if os.path.exists(meta_path):
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            self.CAT_FEATURES = meta.get('cat_features', self.CAT_FEATURES)
+            self.NUM_FEATURES = meta.get('num_features', self.NUM_FEATURES)
+            classes_map = meta.get('encoders', {})
+            self.label_encoders = {c: {cls: i + 1 for i, cls in enumerate(classes_map.get(c, []))} for c in self.CAT_FEATURES}
+            self.vocab_sizes = {c: int(meta.get('vocab_sizes', {}).get(c, 1)) for c in self.CAT_FEATURES}
+            self.scalers = {k: tuple(v) for k, v in meta.get('scalers', {}).items()}
+            self.embed_dims = {c: int(meta.get('embed_dims', {}).get(c, min(50, self.vocab_sizes[c] // 2 + 1))) for c in self.CAT_FEATURES}
+        else:
+            self._build_encoders()
         self._load_model()
 
     def _build_encoders(self):
