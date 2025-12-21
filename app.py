@@ -1,5 +1,5 @@
 import os
-from typing import Dict
+from typing import Dict, Optional
 
 import numpy as np
 import pandas as pd
@@ -15,6 +15,9 @@ USE_LOCAL = len(API_BASE) == 0
 if USE_LOCAL:
     from backend.infer import ModelBundle, predict_for_new_patient
     from backend.recommend import rank_antibiotics
+    from backend.infer_catboost import CatBoostInfer
+    from backend.infer_lstm import LSTMInfer
+    from backend.ensemble import ensemble_predict
 else:
     # Utilities for metadata detection from dataset when using remote API
     from backend.utils import (
@@ -75,6 +78,15 @@ if USE_LOCAL:
     organisms = bundle.metadata.get("organisms", [])
     antibiotics = bundle.metadata.get("antibiotics", [])
     cat_cols = set(bundle.metadata.get("categorical_feature_cols", []))
+    # Initialize inference helpers
+    catboost_inf = CatBoostInfer(models_dir=MODELS_DIR)
+    # LSTM may not exist; handle gracefully
+    try:
+        lstm_inf: Optional[LSTMInfer] = LSTMInfer(models_dir=MODELS_DIR, dataset_csv=DATASET)
+        st.success("LSTM model loaded")
+    except Exception as e:
+        lstm_inf = None
+        st.warning(f"LSTM not available: {e}")
 else:
     # Remote mode: infer columns from dataset
     organism_col = detect_organism_column(df)
@@ -189,6 +201,18 @@ with st.sidebar:
                 default_num = default_for_col(df, col, False)
                 input_values[col] = st.number_input(nice_label(col), value=float(default_num or 0.0), step=1.0, format="%f")
 
+    st.subheader("LSTM Sequence (optional)")
+    st.caption("Upload pre-culture sequence CSV for LSTM scoring. Columns should include categorical and numeric features used in training; last row is most recent.")
+    seq_file = st.file_uploader("Sequence CSV", type=["csv"], accept_multiple_files=False)
+    seq_df = None
+    if seq_file is not None:
+        try:
+            seq_df = pd.read_csv(seq_file)
+            st.success(f"Sequence loaded: {seq_df.shape[0]} timesteps")
+        except Exception as e:
+            st.error(f"Failed to read sequence CSV: {e}")
+
+    alpha = st.slider("Ensemble weight α (CatBoost)", min_value=0.0, max_value=1.0, value=0.6, step=0.05)
     run_btn = st.button("Run Prediction")
 
 if run_btn:
@@ -206,7 +230,23 @@ if run_btn:
 
     try:
         if USE_LOCAL:
-            out = predict_for_new_patient(bundle, row)
+            # Ensemble prediction
+            ens = ensemble_predict(catboost_inf, lstm_inf, row, seq_df, alpha=alpha) if lstm_inf else None
+            if ens:
+                out = {
+                    "resistance_probability": ens["p_final"],
+                    "predicted_time_to_resistance_days": ens["ttr_days"],
+                    "p_catboost": ens["p_catboost"],
+                    "p_lstm": ens["p_lstm"],
+                }
+            else:
+                cb = catboost_inf.predict_catboost(row)
+                out = {
+                    "resistance_probability": cb["p_catboost"],
+                    "predicted_time_to_resistance_days": cb["ttr_days"],
+                    "p_catboost": cb["p_catboost"],
+                    "p_lstm": None,
+                }
         else:
             resp = requests.post(
                 url=f"{API_BASE.rstrip('/')}/predict",
@@ -235,6 +275,14 @@ if run_btn:
             value=f"{float(prob_val):.3f}",
             help="P(resistant | patient, organism, antibiotic)"
         )
+        # Component probabilities if available
+        if USE_LOCAL:
+            p_cb = out.get("p_catboost")
+            p_ls = out.get("p_lstm")
+            if p_cb is not None:
+                st.metric(label="CatBoost Probability", value=f"{float(p_cb):.3f}")
+            if p_ls is not None:
+                st.metric(label="LSTM Probability", value=("N/A" if p_ls is None else f"{float(p_ls):.3f}"))
     with col2:
         ttr = out.get("predicted_time_to_resistance_days") or out.get("predicted_time_to_resistance")
         if ttr is None or (isinstance(ttr, float) and np.isnan(ttr)):
@@ -246,7 +294,7 @@ if run_btn:
     st.subheader("Top Recommended Alternative Antibiotics")
     try:
         if USE_LOCAL:
-            alt_df = rank_antibiotics(bundle, row, organism_val, top_k=10)
+            alt_df = rank_antibiotics(bundle, lstm_inf, row, seq_df, organism_val, alpha=alpha, top_k=10)
         else:
             # Use top_antibiotics returned by API
             alts = out.get("top_antibiotics", [])
@@ -264,6 +312,9 @@ if run_btn:
         "ttr": ttr,
         "organism": organism_val or "",
         "antibiotic": antibiotic_val or "",
+        "p_catboost": out.get("p_catboost"),
+        "p_lstm": out.get("p_lstm"),
+        "alpha": alpha,
     }
     st.session_state["last_alts"] = alt_df.copy() if isinstance(alt_df, pd.DataFrame) else None
 
