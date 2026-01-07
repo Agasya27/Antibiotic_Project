@@ -1,4 +1,4 @@
-catboost==1.2.5
+
 # Pin NumPy to 1.x for CatBoost wheel compatibility on Windows
 numpy==1.26.4
 # Pandas version compatible with NumPy 1.26.x
