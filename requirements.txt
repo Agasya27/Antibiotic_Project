@@ -2,7 +2,7 @@
 # Pin NumPy to 1.x for CatBoost wheel compatibility on Windows
 numpy==1.26.4
 # Pandas version compatible with NumPy 1.26.x
-pandas==2.1.4
+pandas==1.5.3
 # Scikit-Learn version compatible with NumPy 1.26.x
 scikit-learn==1.3.2
 streamlit>=1.29.0
